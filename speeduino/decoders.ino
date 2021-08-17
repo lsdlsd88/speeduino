@@ -4127,5 +4127,302 @@ void triggerSetEndTeeth_FordST170()
 
   lastToothCalcAdvance = currentStatus.advance;
 }
-/** @} */
 
+/*------------------------------------------------------------------------------------------------------------------------------------
+Name: Fiat 1.8 16V with CAM
+Desc: TBA
+Note: https://github.com/noisymime/speeduino/issues/209
+*  Starting from TDC #1 
+      * Cam is high for 40 deg, low for 20, high 170deg, low for 170, high for 20, 
+      * low for 170, then high for 130
+      * Crank is low for 83, high for 5, low for 27, high for 5, low for 50, high for 5,
+      * low for 88, high for 5, low for 27, high for 5, low for 50, high for 5,
+      * low for 88, high for 5, low for 27, high for 5, low for 50, high for 5,
+      * low for 88, high for 5, low for 27, high for 5, low for 50, high for 5, low for 5
+      * http://msextra.com/doc/triggers/fiat1.8-16v.jpg
+*/
+void triggerSetup_Fiat1816V()
+{
+  triggerToothAngle = 0; //The number of degrees that passes from tooth to tooth (primary)
+  toothCurrentCount = 99; //Fake tooth count represents no sync
+  secondDerivEnabled = false;
+  decoderIsSequential = true;
+  decoderHasFixedCrankingTiming = true;
+  triggerToothAngleIsCorrect = false;
+  
+  MAX_STALL_TIME = 366667UL; //Minimum 50rpm based on the 110 degree tooth spacing
+  if(initialisationComplete == false) { toothLastToothTime = micros(); } //Set a startup value here to avoid filter errors when starting. This MUST have the initi check to prevent the fuel pump just staying on all the time
+  //decoderIsLowRes = true;
+
+  //Note that these angles are for every rising edge
+  {
+    // for 4 cylinder
+    toothAngles[0] = 83; //Rising edge of tooth #1
+    toothAngles[1] = 115;  
+    toothAngles[2] = 170;  
+
+    toothAngles[3] = 263; 
+    toothAngles[4] = 295;
+    toothAngles[5] = 350;
+
+    toothAngles[6] = 443;
+    toothAngles[7] = 475;
+    toothAngles[8] = 530;
+
+    toothAngles[9] = 623;
+    toothAngles[10] = 655;
+    toothAngles[11] = 710;
+
+    triggerActualTeeth = 12;
+  }
+
+  triggerFilterTime = 300; //10000 rpm
+  triggerSecFilterTime = 300;
+  triggerSecFilterTime_duration = 4000;
+  secondaryLastToothTime = 0;
+}
+
+void triggerPri_Fiat1816V()
+{
+  curTime = micros();
+  curGap = curTime - toothLastToothTime;
+  unsigned long LastToothGap;
+  //int crankAngle=(getCrankAngle_Fiat1816V());
+ // Serial.print("Tooth:"); Serial.println(toothCurrentCount);
+ //  if(currentStatus.hasSync == true) Serial.println("gotsync");
+//  Serial.print("Angle:"); Serial.println(crankAngle);
+ //Serial.print("Gap:"); Serial.println(curGap);
+ // Serial.print("RPM:"); Serial.println(currentStatus.RPM);
+ //Serial.println(triggerFilterTime);
+  
+  
+  if ( (curGap >= triggerFilterTime) || (currentStatus.startRevolutions == 0) )
+  {
+   // Serial.println("Valid");
+    validTrigger = true; //Flag that this pulse was accepted as a valid trigger
+    //triggerFilterTime = curGap >> 2; //This only applies during non-sync conditions. If there is sync then triggerFilterTime gets changed again below with a better value.
+    
+    LastToothGap = ( toothLastToothTime - toothLastMinusOneToothTime);
+    toothLastMinusOneToothTime = toothLastToothTime;
+    toothLastToothTime = curTime;
+    //Serial.print("lastgap:"); Serial.println(LastToothGap);
+    //Serial.print("lastgap>>3:"); Serial.println(LastToothGap>>3);
+    
+    toothCurrentCount++;
+    
+    if (curGap < ( (LastToothGap*7) >> 4 )) 
+    {
+  //    Serial.println("smallgap");
+      if (READ_SEC_TRIGGER() == true )
+    {
+     // Serial.println("camhigh");
+      if (toothCurrentCount != 11 ) toothCurrentCount=2;
+      }
+      else
+      {
+      //  Serial.println("camlow");
+      if (toothCurrentCount != 5 ) toothCurrentCount=8;
+      }
+    }
+    if( (toothCurrentCount == 1) || (toothCurrentCount > triggerActualTeeth) ) //Trigger is on CHANGE
+    {
+       toothCurrentCount = 1; //Reset the counter
+       toothOneMinusOneTime = toothOneTime;
+       toothOneTime = curTime;
+       currentStatus.startRevolutions++; //Counter
+    }
+
+    if (currentStatus.hasSync == true)
+    {
+      if ( BIT_CHECK(currentStatus.engine, BIT_ENGINE_CRANK) && configPage4.ignCranklock && (currentStatus.startRevolutions >= configPage4.StgCycles))
+      {
+        if(configPage2.nCylinders == 4)
+        {
+          //This operates in forced wasted spark mode during cranking to align with crank teeth
+          if( (toothCurrentCount == 1) || (toothCurrentCount == 5) ) { endCoil1Charge(); endCoil3Charge(); }
+          else if( (toothCurrentCount == 3) || (toothCurrentCount == 7) ) { endCoil2Charge(); endCoil4Charge(); }
+        }
+      }
+      
+
+      //EXPERIMENTAL!
+      //New ignition mode is ONLY available on 4g63 when the trigger angle is set to the stock value of 0.
+    /*  if( (configPage2.perToothIgn == true) && (configPage4.triggerAngle == 0) )
+      {
+        if( (configPage2.nCylinders == 4) && (currentStatus.advance > 0) )
+        {
+          uint16_t crankAngle = ignitionLimits( toothAngles[(toothCurrentCount-1)] );
+
+          //Handle non-sequential tooth counts 
+          if( (configPage4.sparkMode != IGN_MODE_SEQUENTIAL) && (toothCurrentCount > configPage2.nCylinders) ) { checkPerToothTiming(crankAngle, (toothCurrentCount-configPage2.nCylinders) ); }
+          else { checkPerToothTiming(crankAngle, toothCurrentCount); }
+        }
+      } */
+    } //Has sync
+        
+  } //Filter time
+
+}
+void triggerSec_Fiat1816V()
+{
+  //byte crankState = READ_PRI_TRIGGER();
+  //First filter is a duration based one to ensure the pulse was of sufficient length (time)
+  /*if(READ_SEC_TRIGGER()) { secondaryLastToothTime1 = micros(); return; }
+  if(currentStatus.hasSync == true)
+  {
+  //1166 is the time taken to cross 70 degrees at 10k rpm
+  //if ( (micros() - secondaryLastToothTime1) < triggerSecFilterTime_duration ) { return; }
+  //triggerSecFilterTime_duration = (micros() - secondaryLastToothTime1) >> 1;
+  }*/
+
+  curTime2 = micros();
+  curGap2 = curTime2 - toothLastSecToothTime;
+ // Serial.print("Gapcam");Serial.println(curGap2);
+  //Serial.print("CAMTooth:"); Serial.println(toothCurrentCount);
+  //Serial.print("camfil");Serial.println(triggerSecFilterTime);
+  if ( (curGap2 >= triggerSecFilterTime) )//|| (currentStatus.startRevolutions == 0) )
+  {
+    toothLastSecToothTime = curTime2;
+    validTrigger = true;//Flag that this pulse was accepted as a valid trigger
+    
+    //addToothLogEntry(curGap, TOOTH_CAM);
+
+    //triggerSecFilterTime = curGap2 >> 1; //Basic 50% filter for the secondary reading
+    //More aggressive options:
+    //62.5%:
+    //triggerSecFilterTime = (curGap2 * 9) >> 5;
+    //75%:
+    //triggerSecFilterTime = (curGap2 * 6) >> 3;
+
+    //if( (currentStatus.RPM < currentStatus.crankRPM) || (currentStatus.hasSync == false) )
+    if( (currentStatus.hasSync == false) )
+    {
+
+      triggerFilterTime = 500; //If this is removed, can have trouble getting sync again after the engine is turned off (but ECU not reset).
+      //triggerSecFilterTime = triggerSecFilterTime >> 1; //Divide the secondary filter time by 2 again, making it 25%. Only needed when cranking
+      if(READ_PRI_TRIGGER() == false)
+      {
+        if(configPage2.nCylinders == 4)
+        { 
+          if(toothCurrentCount == 12) { currentStatus.hasSync = true; } //Is 8 for sequential, was 4
+        }
+        
+        }
+     
+      }
+      
+    }
+
+    //if ( (micros() - secondaryLastToothTime1) < triggerSecFilterTime_duration && configPage2.useResync )
+    if ( (currentStatus.RPM < currentStatus.crankRPM) || (configPage4.useResync == 1) )
+    {
+      if( (currentStatus.hasSync == true) && (configPage2.nCylinders == 4) )
+      {
+        triggerSecFilterTime_duration = (micros() - secondaryLastToothTime1) >> 1;
+        if(READ_PRI_TRIGGER() == true)
+        {
+          //Whilst we're cranking and have sync, we need to watch for noise pulses.
+          if(toothCurrentCount != 8) 
+          { 
+            // This should never be true, except when there's noise
+            currentStatus.hasSync = false; 
+            currentStatus.syncLossCounter++;
+          } 
+          else { toothCurrentCount = 8; } //Why? Just why?
+        }
+      } //Has sync and 4 cylinder 
+    } // Use resync or cranking
+   
+}
+
+
+
+uint16_t getRPM_Fiat1816V()
+{
+  uint16_t tempRPM = 0;
+  //During cranking, RPM is calculated 4 times per revolution, once for each rising/falling of the crank signal.
+  //Because these signals aren't even (Alternating 110 and 70 degrees), this needs a special function
+  //if(currentStatus.hasSync == true)
+  {
+    /*if( (currentStatus.RPM < currentStatus.crankRPM)  )
+    {
+      int tempToothAngle;
+      unsigned long toothTime;
+      if( (toothLastToothTime == 0) || (toothLastMinusOneToothTime == 0) ) { tempRPM = 0; }
+      else
+      {
+        noInterrupts();
+        tempToothAngle = triggerToothAngle;
+        toothTime = (toothLastToothTime - toothLastMinusOneToothTime); //Note that trigger tooth angle changes between 70 and 110 depending on the last tooth that was seen (or 70/50 for 6 cylinders)
+        interrupts();
+        toothTime = toothTime * 36;
+        tempRPM = ((unsigned long)tempToothAngle * 6000000UL) / toothTime;
+        //Serial.println(tempRPM);
+        revolutionTime = (10UL * toothTime) / tempToothAngle;
+        MAX_STALL_TIME = 366667UL; // 50RPM
+      }
+    }
+    else */
+    {
+      tempRPM = stdGetRPM(720);
+      //EXPERIMENTAL! Add/subtract RPM based on the last rpmDOT calc
+      //tempRPM += (micros() - toothOneTime) * currentStatus.rpmDOT
+      MAX_STALL_TIME = revolutionTime << 1; //Set the stall time to be twice the current RPM. This is a safe figure as there should be no single revolution where this changes more than this
+      if(MAX_STALL_TIME < 366667UL) { MAX_STALL_TIME = 366667UL; } //Check for 50rpm minimum
+    }
+  }
+
+  return tempRPM;
+}
+
+int getCrankAngle_Fiat1816V()
+{
+    int crankAngle = 0;
+    //if(currentStatus.hasSync == true)
+    {
+      //This is the current angle ATDC the engine is at. This is the last known position based on what tooth was last 'seen'. It is only accurate to the resolution of the trigger wheel (Eg 36-1 is 10 degrees)
+      unsigned long tempToothLastToothTime;
+      int tempToothCurrentCount;
+      //Grab some variables that are used in the trigger code and assign them to temp variables.
+      noInterrupts();
+      tempToothCurrentCount = toothCurrentCount;
+      tempToothLastToothTime = toothLastToothTime;
+      lastCrankAngleCalc = micros(); //micros() is no longer interrupt safe
+      interrupts();
+
+      crankAngle = toothAngles[(tempToothCurrentCount - 1)] + configPage4.triggerAngle; //Perform a lookup of the fixed toothAngles array to find what the angle of the last tooth passed was.
+
+      //Estimate the number of degrees travelled since the last tooth}
+      elapsedTime = (lastCrankAngleCalc - tempToothLastToothTime);
+      crankAngle += timeToAngle(elapsedTime, CRANKMATH_METHOD_INTERVAL_REV);
+
+      if (crankAngle >= 720) { crankAngle -= 720; }
+      if (crankAngle > CRANK_ANGLE_MAX) { crankAngle -= CRANK_ANGLE_MAX; }
+      if (crankAngle < 0) { crankAngle += 360; }
+    }
+    return crankAngle;
+}
+
+void triggerSetEndTeeth_Fiat1816V()
+{
+  if(configPage2.nCylinders == 4)
+  {
+    if(configPage4.sparkMode == IGN_MODE_SEQUENTIAL) 
+    { 
+      ignition1EndTooth = 1;
+      ignition2EndTooth = 4;
+      ignition3EndTooth = 7;
+      ignition4EndTooth = 10;
+    }
+    else
+    {
+      ignition1EndTooth = 1;
+      ignition2EndTooth = 7;
+      ignition3EndTooth = 4; //Not used
+      ignition4EndTooth = 2;
+    }
+  }
+
+  lastToothCalcAdvance = currentStatus.advance;
+}
+/** @} */

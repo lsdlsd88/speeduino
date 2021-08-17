@@ -3217,6 +3217,22 @@ void initialiseTriggers()
 
       break;
 
+      case DECODER_FIAT1816V:
+      triggerSetup_Fiat1816V();
+      triggerHandler = triggerPri_Fiat1816V;
+      triggerSecondaryHandler = triggerSec_Fiat1816V;
+      decoderHasSecondary = true;
+      getRPM = getRPM_Fiat1816V;
+      getCrankAngle = getCrankAngle_Fiat1816V;
+      triggerSetEndTeeth = triggerSetEndTeeth_Fiat1816V;
+
+      primaryTriggerEdge = RISING;
+      secondaryTriggerEdge = CHANGE;
+
+      attachInterrupt(triggerInterrupt, triggerHandler, primaryTriggerEdge);
+      attachInterrupt(triggerInterrupt2, triggerSecondaryHandler, secondaryTriggerEdge);
+      break;
+
     default:
       triggerHandler = triggerPri_missingTooth;
       getRPM = getRPM_missingTooth;
